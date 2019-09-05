@@ -1,6 +1,9 @@
 #include <LoRa.h>
 #include <SSD1306.h>
 #include <SPI.h>
+#include "rs8.h"
+#include <RH_RF95.h>
+#include <RHSoftwareSPI.h>
 
 // Pinos do display (comunicação i2c)
 const int DISPLAY_ADDRESS_PIN = 0x3c;
@@ -8,16 +11,17 @@ const int DISPLAY_SDA_PIN = 4;
 const int DISPLAY_SCL_PIN = 15;
 const int DISPLAY_RST_PIN = 16;
 
-// Pinos do lora (comunicação spi)
-const int LORA_SCK_PIN = 5;
-const int LORA_MISO_PIN = 19;
-const int LORA_MOSI_PIN = 27;
-const int LORA_SS_PIN = 18;
-const int LORA_RST_PIN = 15;
-const int LORA_DI00_PIN = 26;
-
-// Frequência de comunicação
-const int BAND = 915E6;
+// LoRa Settings (SPI)
+const int LORA_SCK = 5;
+const int LORA_MISO = 19;
+const int LORA_MOSI = 27;
+const int LORA_SS = 18;
+const int LORA_RST = 15;
+const int LORA_DI00 = 26;
+const int LORA_FREQ = 915.0;
+const int LORA_SF = 7;
+const int LORA_CODING_RATE = 5;
+const int LORA_BANDWIDTH = 62.5E3;
 
 // Altura da fonte (correspondente a fonte ArialMT_Plain_16)
 const int fontHeight = 16; 
@@ -81,7 +85,8 @@ void setup()
   // Iniciamos a serial com velocidade de 9600
   Serial.begin(115200);
   LoRa.setSpreadingFactor(7);
-  LoRa.setSignalBandwidth(250E3);
+  LoRa.setSignalBandwidth(62.5E3);
+  LoRa.enableCrc();
 
   // Exibimos "Starting..." na serial (debug)
   Serial.println("Starting...");

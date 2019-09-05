@@ -1,13 +1,15 @@
+#include "rs8.h"
+#include <Arduino.h>
+#include <FS.h>
+#include <RHSoftwareSPI.h>
+#include <RH_RF95.h>
 #include <RTClib.h>
-#include <LoRa.h>
-#include <SSD1306.h>
+#include <RTClib.h>
+#include <SD.h>
 #include <SPI.h>
+#include <SSD1306.h>
 #include <pgmspace.h>
 #include <string.h>
-#include "rs8.h"
-#include "FS.h"
-#include <SD.h>
-#include <RTClib.h>
 
 //=========================================== CONSTANTS
 
@@ -16,30 +18,30 @@
 // Serial Settings
 const int SERIAL_BR = 57600;
 
-// RTC Settings
+// RTC Settings (I2C)
 char daysOfTheWeek[7][12] = {"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"};
 
-// SD Settings
-const int SD_SCK_PIN = 5;
-const int SD_MISO_PIN = 12;
-const int SD_MOSI_PIN = 13;
-const int SD_SS_PIN = 22;
+// SD Settings (SPI)
+const int SD_SCK = 17;
+const int SD_MISO = 13;
+const int SD_MOSI = 12;
+const int SD_SS = 23;
 
 // Display Settings (I2C)
-const int DISPLAY_ADDRESS_PIN = 0x3c;
-const int DISPLAY_SDA_PIN = 4;
-const int DISPLAY_SCL_PIN = 15;
-const int DISPLAY_RST_PIN = 16;
+const int DISPLAY_ADDRESS = 0x3c;
+const int DISPLAY_SDA = 4;
+const int DISPLAY_SCL = 15;
+const int DISPLAY_RST = 16;
 const int FONT_HEIGHT = 16;
 
 // LoRa Settings (SPI)
-const int LORA_SCK_PIN = 5;
-const int LORA_MISO_PIN = 19;
-const int LORA_MOSI_PIN = 27;
-const int LORA_SS_PIN = 18;
-const int LORA_RST_PIN = 15;
-const int LORA_DI00_PIN = 26;
-const int LORA_BAND = 915E6;
+const int LORA_SCK = 5;
+const int LORA_MISO = 19;
+const int LORA_MOSI = 27;
+const int LORA_SS = 18;
+const int LORA_RST = 15;
+const int LORA_DI00 = 26;
+const int LORA_FREQ = 915.0;
 const int LORA_SF = 7;
 const int LORA_CODING_RATE = 5;
 const int LORA_BANDWIDTH = 62.5E3;
@@ -107,10 +109,17 @@ PROGMEM const uint8_t poly[] = {
 //=============================================================================================== VARIABLES
 
 int counter = 0;
+char *StrCounter;
 
 RTC_DS3231 rtc;
-SSD1306 display(DISPLAY_ADDRESS_PIN, DISPLAY_SDA_PIN, DISPLAY_SCL_PIN);
-//SPIClass sd_spi(HSPI);
+SSD1306 display(DISPLAY_ADDRESS, DISPLAY_SDA, DISPLAY_SCL);
+SPIClass sd_spi(HSPI);
+
+RHSoftwareSPI sx1278_spi;
+RH_RF95 rf95(LORA_SS, LORA_DI00, sx1278_spi);
+uint8_t lora_len = RH_RF95_MAX_MESSAGE_LEN;
+
+char lora_buf[RH_RF95_MAX_MESSAGE_LEN];
 
 //=============================================================================================== FUNCTIONS
 
@@ -149,14 +158,18 @@ void encode_rs_8(uint8_t *data, uint8_t *parity, int pad)
   }
 }
 
-bool displayBegin()
+void displayInit()
 {
-  pinMode(DISPLAY_RST_PIN, OUTPUT);
-  digitalWrite(DISPLAY_RST_PIN, LOW);
+  pinMode(DISPLAY_RST, OUTPUT);
+  digitalWrite(DISPLAY_RST, LOW);
   delay(1);
-  digitalWrite(DISPLAY_RST_PIN, HIGH);
+  digitalWrite(DISPLAY_RST, HIGH);
   delay(1);
-  return display.init(); 
+  if(!display.init())
+    Serial.println("Display: init failed!");
+  else
+    Serial.println("Display: init OK!"); 
+  displayConfig();
 }
 
 void displayConfig()
@@ -166,11 +179,57 @@ void displayConfig()
   display.setTextAlignment(TEXT_ALIGN_LEFT);
 }
 
-bool loraBegin()
+void loraInit()
 {
-  SPI.begin(LORA_SCK_PIN, LORA_MISO_PIN, LORA_MOSI_PIN, LORA_SS_PIN);
-  LoRa.setPins(LORA_SS_PIN, LORA_RST_PIN, LORA_DI00_PIN);
-  return LoRa.begin(LORA_BAND);
+  pinMode(LORA_RST, OUTPUT);
+  digitalWrite(LORA_RST, LOW);
+  delay(100);
+  digitalWrite(LORA_RST, HIGH);
+
+  sx1278_spi.setPins(LORA_MISO, LORA_MOSI, LORA_SCK);
+
+  if (!rf95.init()) 
+    Serial.println("LoRa Radio: init failed.");
+  else
+    Serial.println("LoRa Radio: init OK!");
+
+  RH_RF95::ModemConfig myconfig =  {  RH_RF95_BW_62_5KHZ | RH_RF95_CODING_RATE_4_5, RH_RF95_SPREADING_FACTOR_128CPS};
+  rf95.setModemRegisters(&myconfig);
+
+  float Freq = LORA_FREQ;
+
+  if (!rf95.setFrequency(LORA_FREQ))
+    Serial.println("LoRa Radio: setFrequency failed.");
+  else
+    Serial.printf("LoRa Radio: freqency set to %.1f MHz\n", Freq);
+
+  Serial.printf("LoRa Radio: Max Msg size: %u Bytes\n", RH_RF95_MAX_MESSAGE_LEN);
+
+  rf95.setModeTx();
+  rf95.setTxPower(17, false);
+  rf95.setSpreadingFactor(LORA_SF);
+  rf95.setSignalBandwidth(LORA_BANDWIDTH);
+  rf95.setCodingRate4(LORA_CODING_RATE);
+  rf95.setPayloadCRC(true);
+
+  //rf95.printRegisters();
+  
+}
+
+void SDInit()
+{  
+  sd_spi.begin(SD_SCK, SD_MISO, SD_MOSI, SD_SS);
+  
+  if(!SD.begin(SD_SS, sd_spi))
+    Serial.println("SD Card: Card Mount Failed");
+  else
+    Serial.println("SD Card: Card Mount OK!");
+    
+  uint8_t cardType = SD.cardType();
+  if(cardType == CARD_NONE)
+    Serial.println("SD Card: No SD card attached");
+  else
+    Serial.println("SD Card: SD card detected!");
 }
 
 void currentTime()
@@ -178,20 +237,30 @@ void currentTime()
   DateTime now = rtc.now();
     
   Serial.println("Current Date & Time: ");
-  Serial.print(now.day(), DEC);
-  Serial.print('/');
-  Serial.print(now.month(), DEC);
-  Serial.print('/');
-  Serial.print(now.year(), DEC);
-  Serial.print(" (");
-  Serial.print(daysOfTheWeek[now.dayOfTheWeek()]);
-  Serial.print(") ");
-  Serial.print(now.hour(), DEC);
-  Serial.print(':');
-  Serial.print(now.minute(), DEC);
-  Serial.print(':');
-  Serial.print(now.second(), DEC);
-  Serial.println();
+  
+  char dateBuffer[25];
+
+  sprintf(dateBuffer,"%02u/%02u/%04u (%s)",now.day(),now.month(),now.year(),daysOfTheWeek[now.dayOfTheWeek()]);
+  Serial.println(dateBuffer);
+  sprintf(dateBuffer,"%02u:%02u:%02u ",now.hour(),now.minute(),now.second());
+  Serial.println(dateBuffer);
+}
+
+void RTCInit()
+{  
+  if (!rtc.begin())
+    Serial.println("RTC: Couldn't find RTC");
+  else
+    Serial.println("RTC: init OK!");
+
+  //rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
+
+  if (rtc.lostPower()) {
+    Serial.println("RTC lost power, setting time...");
+    rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
+  }
+
+  currentTime();
 }
 
 //==================================================================================================== MAIN
@@ -200,54 +269,13 @@ void setup()
 {
   Serial.begin(SERIAL_BR);
   delay(3000);
-
-  pinMode(18, OUTPUT);
-  digitalWrite(18, HIGH);
-  pinMode(22, OUTPUT);
-  digitalWrite(22, HIGH);
-
-  //sd_spi.begin(SD_SCK_PIN, SD_MISO_PIN, SD_MOSI_PIN, SD_SS_PIN);
   
   Serial.println("Starting...");
 
-  if(!displayBegin())
-  {
-    Serial.println("Display failed!");
-    while(1);
-  }
-
-  displayConfig();
-
-  LoRa.setSpreadingFactor(LORA_SF);
-  LoRa.setSignalBandwidth(LORA_BANDWIDTH);
-  LoRa.setCodingRate4(LORA_CODING_RATE);
-  LoRa.enableCrc();
-  
-  if(!loraBegin()) 
-  {
-    Serial.println("LoRa failed!");
-  }
- 
-  if(!SD.begin(SD_SS_PIN)) {
-    Serial.println("Card Mount Failed");
-    return;
-  }
-  uint8_t cardType = SD.cardType();
-  if(cardType == CARD_NONE) {
-    Serial.println("No SD card attached");
-    return;
-  }
-
-  if (! rtc.begin()) {
-    Serial.println("Couldn't find RTC");
-  }
-
-  if (rtc.lostPower()) {
-    Serial.println("RTC lost power, lets set the time!");
-    rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
-  }
-
-  currentTime();
+  displayInit();
+  loraInit();
+  SDInit();
+  RTCInit();
 }
 
 void loop() 
@@ -260,13 +288,13 @@ void loop()
   display.drawString(0, line * FONT_HEIGHT, String(counter));
 
   display.display();
+  
+  String aux = "hello " + String(StrCounter);
+  aux.toCharArray(lora_buf,RH_RF95_MAX_MESSAGE_LEN);
+  rf95.send((uint8_t *)lora_buf, lora_len);
+  rf95.waitPacketSent();
 
-  LoRa.beginPacket();
-  LoRa.print("hello ");
-  LoRa.print(counter);
-  LoRa.endPacket();
-
-  Serial.println("Sent: hello " + String(counter));
+  //Serial.println("Sent: hello " + String(counter));
 
   counter++;
 
