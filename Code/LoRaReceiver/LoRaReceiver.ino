@@ -2,6 +2,7 @@
 #include <SSD1306.h>
 #include <SPI.h>
 #include "rs8.h"
+#include "images.h"
 #include <RH_RF95.h>
 #include <RHSoftwareSPI.h>
 
@@ -69,21 +70,47 @@ void displayConfig()
 }
 
 
-// Função que inicializa o radio lora
-bool loraBegin()
+void loraInit()
 {
-  // Iniciamos a comunicação SPI
-  SPI.begin(LORA_SCK_PIN, LORA_MISO_PIN, LORA_MOSI_PIN, LORA_SS_PIN);
-  // Setamos os pinos do lora
-  LoRa.setPins(LORA_SS_PIN, LORA_RST_PIN, LORA_DI00_PIN);
-  // Iniciamos o lora
-  return LoRa.begin(BAND);
+  pinMode(LORA_RST, OUTPUT);
+  digitalWrite(LORA_RST, LOW);
+  delay(100);
+  digitalWrite(LORA_RST, HIGH);
+
+  sx1278_spi.setPins(LORA_MISO, LORA_MOSI, LORA_SCK);
+
+  if (!rf95.init()) 
+    Serial.println("LoRa Radio: init failed.");
+  else
+    Serial.println("LoRa Radio: init OK!");
+
+  RH_RF95::ModemConfig myconfig =  {RH_RF95_BW_62_5KHZ, RH_RF95_CODING_RATE_4_5, RH_RF95_SPREADING_FACTOR_128CPS};
+  rf95.setModemRegisters(&myconfig);
+
+  float Freq = LORA_FREQ;
+
+  if (!rf95.setFrequency(LORA_FREQ))
+    Serial.println("LoRa Radio: setFrequency failed.");
+  else
+    Serial.printf("LoRa Radio: freqency set to %.1f MHz\n", Freq);
+
+  Serial.printf("LoRa Radio: Max Msg size: %u Bytes\n", RH_RF95_MAX_MESSAGE_LEN);
+
+  rf95.setModeRx();
+  rf95.setTxPower(20, false);
+  rf95.setSpreadingFactor(LORA_SF);
+  rf95.setSignalBandwidth(LORA_BANDWIDTH);
+  rf95.setCodingRate4(LORA_CODING_RATE);
+  rf95.setPayloadCRC(true);
+
+  //rf95.printRegisters();
+  
 }
 
 void setup() 
 {
   // Iniciamos a serial com velocidade de 9600
-  Serial.begin(115200);
+  Serial.begin(57600);
   LoRa.setSpreadingFactor(7);
   LoRa.setSignalBandwidth(62.5E3);
   LoRa.enableCrc();

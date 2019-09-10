@@ -1,9 +1,11 @@
 #include "rs8.h"
+#include "images.h"
 #include <Arduino.h>
+#include <DallasTemperature.h>
 #include <FS.h>
+#include <OneWire.h>
 #include <RHSoftwareSPI.h>
 #include <RH_RF95.h>
-#include <RTClib.h>
 #include <RTClib.h>
 #include <SD.h>
 #include <SPI.h>
@@ -11,7 +13,19 @@
 #include <pgmspace.h>
 #include <string.h>
 
-//=========================================== CONSTANTS
+#define DEBUG
+
+#ifdef DEBUG
+  #define DEBUG_PRINT(x) Serial.print(x)
+  #define DEBUG_PRINTLN(x) Serial.println(x)
+  #define DEBUG_PRINTF(x,y) printf(x,y)
+#else
+  #define DEBUG_PRINT(x)
+  #define DEBUG_PRINTLN(x)
+  #define DEBUG_PRINTF(x,y)
+#endif
+
+//========================================================================================================= CONSTANTS
 
 #define CALLSIGN "HABT"
 
@@ -45,6 +59,9 @@ const int LORA_FREQ = 915.0;
 const int LORA_SF = 7;
 const int LORA_CODING_RATE = 5;
 const int LORA_BANDWIDTH = 62.5E3;
+
+//Term Settings (OneWire)
+const int ONEWIRE_PIN = 33;
 
 // Payload Bytes
 const int SYNC_BYTE = 0x55;
@@ -121,6 +138,9 @@ uint8_t lora_len = RH_RF95_MAX_MESSAGE_LEN;
 
 char lora_buf[RH_RF95_MAX_MESSAGE_LEN];
 
+OneWire oneWire(ONEWIRE_PIN);
+DallasTemperature term(&oneWire);
+
 //=============================================================================================== FUNCTIONS
 
 inline int mod255(int x)
@@ -132,6 +152,8 @@ inline int mod255(int x)
   }
   return(x);
 }
+
+//----------------------------------------------------------------------------------
 
 void encode_rs_8(uint8_t *data, uint8_t *parity, int pad)
 {
@@ -158,7 +180,9 @@ void encode_rs_8(uint8_t *data, uint8_t *parity, int pad)
   }
 }
 
-void displayInit()
+//--------------------------------------------------------------------------------------------------
+
+inline void displayInit()
 {
   pinMode(DISPLAY_RST, OUTPUT);
   digitalWrite(DISPLAY_RST, LOW);
@@ -166,20 +190,26 @@ void displayInit()
   digitalWrite(DISPLAY_RST, HIGH);
   delay(1);
   if(!display.init())
-    Serial.println("Display: init failed!");
+    DEBUG_PRINTLN("Display: WARNING! Init failed!");
   else
-    Serial.println("Display: init OK!"); 
+    DEBUG_PRINTLN("Display: Init OK!"); 
   displayConfig();
 }
 
-void displayConfig()
+//------------------------------------------------------------------------------------------------
+
+inline void displayConfig()
 {
   display.flipScreenVertically();
   display.setFont(ArialMT_Plain_16);
   display.setTextAlignment(TEXT_ALIGN_LEFT);
+  display.drawXbm(0, 0, logo_width, logo_height, (uint8_t*) logo_bits);
+  delay(1000);
 }
 
-void loraInit()
+//------------------------------------------------------------------------------------------------
+
+inline void loraInit()
 {
   pinMode(LORA_RST, OUTPUT);
   digitalWrite(LORA_RST, LOW);
@@ -189,21 +219,21 @@ void loraInit()
   sx1278_spi.setPins(LORA_MISO, LORA_MOSI, LORA_SCK);
 
   if (!rf95.init()) 
-    Serial.println("LoRa Radio: init failed.");
+    DEBUG_PRINTLN("LoRa Radio: WARNING! Init failed.");
   else
-    Serial.println("LoRa Radio: init OK!");
+    DEBUG_PRINTLN("LoRa Radio: Init OK!");
 
-  RH_RF95::ModemConfig myconfig =  {  RH_RF95_BW_62_5KHZ | RH_RF95_CODING_RATE_4_5, RH_RF95_SPREADING_FACTOR_128CPS};
+  RH_RF95::ModemConfig myconfig =  {RH_RF95_BW_62_5KHZ, RH_RF95_CODING_RATE_4_5, RH_RF95_SPREADING_FACTOR_128CPS};
   rf95.setModemRegisters(&myconfig);
 
   float Freq = LORA_FREQ;
 
   if (!rf95.setFrequency(LORA_FREQ))
-    Serial.println("LoRa Radio: setFrequency failed.");
+    DEBUG_PRINTLN("LoRa Radio: WARNING! setFrequency failed.");
   else
-    Serial.printf("LoRa Radio: freqency set to %.1f MHz\n", Freq);
+    DEBUG_PRINTF("LoRa Radio: Freqency set to %.1f MHz\n", Freq);
 
-  Serial.printf("LoRa Radio: Max Msg size: %u Bytes\n", RH_RF95_MAX_MESSAGE_LEN);
+  DEBUG_PRINTF("LoRa Radio: Max Msg size: %u Bytes\n", RH_RF95_MAX_MESSAGE_LEN);
 
   rf95.setModeTx();
   rf95.setTxPower(17, false);
@@ -216,51 +246,84 @@ void loraInit()
   
 }
 
-void SDInit()
+//---------------------------------------------------------------------------------------------------------
+
+inline void SDInit()
 {  
   sd_spi.begin(SD_SCK, SD_MISO, SD_MOSI, SD_SS);
   
   if(!SD.begin(SD_SS, sd_spi))
-    Serial.println("SD Card: Card Mount Failed");
+    DEBUG_PRINTLN("SD Card: WARNING! Card Mount Failed");
   else
-    Serial.println("SD Card: Card Mount OK!");
+    DEBUG_PRINTLN("SD Card: Card Mount OK!");
     
   uint8_t cardType = SD.cardType();
   if(cardType == CARD_NONE)
-    Serial.println("SD Card: No SD card attached");
+    DEBUG_PRINTLN("SD Card: WARNING! No SD card attached");
   else
-    Serial.println("SD Card: SD card detected!");
+    DEBUG_PRINTLN("SD Card: SD card detected!");
 }
+
+//---------------------------------------------------------------------------------------------------------
 
 void currentTime()
 {
   DateTime now = rtc.now();
     
-  Serial.println("Current Date & Time: ");
+  DEBUG_PRINTLN("Current Date & Time: ");
   
   char dateBuffer[25];
 
   sprintf(dateBuffer,"%02u/%02u/%04u (%s)",now.day(),now.month(),now.year(),daysOfTheWeek[now.dayOfTheWeek()]);
-  Serial.println(dateBuffer);
+  DEBUG_PRINTLN(dateBuffer);
   sprintf(dateBuffer,"%02u:%02u:%02u ",now.hour(),now.minute(),now.second());
-  Serial.println(dateBuffer);
+  DEBUG_PRINTLN(dateBuffer);
 }
 
-void RTCInit()
+//---------------------------------------------------------------------------------------------------------
+
+inline void RTCInit()
 {  
   if (!rtc.begin())
-    Serial.println("RTC: Couldn't find RTC");
+    DEBUG_PRINTLN("RTC: WARNING! Couldn't find RTC");
   else
-    Serial.println("RTC: init OK!");
+    DEBUG_PRINTLN("RTC: Init OK!");
 
   //rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
 
   if (rtc.lostPower()) {
-    Serial.println("RTC lost power, setting time...");
+    DEBUG_PRINTLN("RTC lost power, setting time...");
     rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
   }
 
   currentTime();
+}
+
+//----------------------------------------------------------------------------------------------------------
+
+inline void termInit()
+{
+  DEBUG_PRINTLN("Initializing DS18B20 Temp. Sensor...");
+  term.begin();
+  term.requestTemperatures();
+  DEBUG_PRINT("Current Temp: ");
+  float tempC = term.getTempCByIndex(0);
+  DEBUG_PRINT(tempC);
+  DEBUG_PRINTLN("°C");
+
+  (tempC >= 0 && tempC <= 40) ? DEBUG_PRINTLN("DS18B20: Init OK! Check Readings.") : DEBUG_PRINTLN("DS18B20: WARNING! Init failed. Inaccurate readings detected, check sensor connections.");
+  
+}
+
+//-----------------------------------------------------------------------------------------------------------
+
+void getTemp()
+{
+  term.requestTemperatures();
+  DEBUG_PRINT("Current Temp: ");
+  float tempC = term.getTempCByIndex(0);
+  DEBUG_PRINT(tempC);
+  DEBUG_PRINTLN("°C");
 }
 
 //==================================================================================================== MAIN
@@ -268,18 +331,21 @@ void RTCInit()
 void setup() 
 {
   Serial.begin(SERIAL_BR);
-  delay(3000);
   
-  Serial.println("Starting...");
+  DEBUG_PRINTLN("Starting...");
 
   displayInit();
   loraInit();
   SDInit();
   RTCInit();
+  termInit();
 }
+
+//------------------------------------------------------------------------------
 
 void loop() 
 {  
+
   int line = 0;
   
   display.clear();
@@ -294,9 +360,11 @@ void loop()
   rf95.send((uint8_t *)lora_buf, lora_len);
   rf95.waitPacketSent();
 
-  //Serial.println("Sent: hello " + String(counter));
+  //DEBUG_PRINTLN("Sent: hello " + String(counter));
 
   counter++;
+
+  //getTemp();
 
   delay(1000);
 }
