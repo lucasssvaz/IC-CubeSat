@@ -1,16 +1,41 @@
-#include <LoRa.h>
-#include <SSD1306.h>
-#include <SPI.h>
 #include "rs8.h"
 #include "images.h"
-#include <RH_RF95.h>
+#include <Arduino.h>
 #include <RHSoftwareSPI.h>
+#include <RH_RF95.h>
+#include <SPI.h>
+#include <SD.h>
+#include <SSD1306.h>
+#include <pgmspace.h>
+#include <string.h>
 
-// Pinos do display (comunicação i2c)
-const int DISPLAY_ADDRESS_PIN = 0x3c;
-const int DISPLAY_SDA_PIN = 4;
-const int DISPLAY_SCL_PIN = 15;
-const int DISPLAY_RST_PIN = 16;
+#define DEBUG
+
+#ifdef DEBUG
+  #define DEBUG_PRINT(x) Serial.print(x)
+  #define DEBUG_PRINTLN(x) Serial.println(x)
+  #define DEBUG_PRINTLN2(x,y) Serial.println(x,y)
+  #define DEBUG_PRINTF(x,y) printf(x,y)
+#else
+  #define DEBUG_PRINT(x)
+  #define DEBUG_PRINTLN(x)
+  #define DEBUG_PRINTLN2(x,y)
+  #define DEBUG_PRINTF(x,y)
+#endif
+
+//========================================================================================================= CONSTANTS
+
+#define CALLSIGN "HABT"
+
+// Serial Settings
+const int SERIAL_BR = 57600;
+
+// Display Settings (I2C)
+const int DISPLAY_ADDRESS = 0x3c;
+const int DISPLAY_SDA = 4;
+const int DISPLAY_SCL = 15;
+const int DISPLAY_RST = 16;
+const int FONT_HEIGHT = 16;
 
 // LoRa Settings (SPI)
 const int LORA_SCK = 5;
@@ -19,58 +44,59 @@ const int LORA_MOSI = 27;
 const int LORA_SS = 18;
 const int LORA_RST = 15;
 const int LORA_DI00 = 26;
-const int LORA_FREQ = 915.0;
+const float LORA_FREQ = 915.0;
 const int LORA_SF = 7;
 const int LORA_CODING_RATE = 5;
 const int LORA_BANDWIDTH = 62.5E3;
 
-// Altura da fonte (correspondente a fonte ArialMT_Plain_16)
-const int fontHeight = 16; 
+// Payload Bytes
+const int SYNC_BYTE = 0x55;
+const int PACKAGE_TYPE = 0x66;
 
-// Objeto do display
-SSD1306 display(DISPLAY_ADDRESS_PIN, DISPLAY_SDA_PIN, DISPLAY_SCL_PIN);
 
-String rssi = "RSSI --";
-String packSize = "--";
-String packet ;
+//=============================================================================================== VARIABLES
 
-void cbk(int packetSize) {
-  packet ="";
-  packSize = String(packetSize,DEC); //transforma o tamanho do pacote em String para imprimirmos
-  for (int i = 0; i < packetSize; i++) { 
-    packet += (char) LoRa.read(); //recupera o dado recebido e concatena na variável "packet"
-  }
-  rssi = "RSSI=  " + String(LoRa.packetRssi(), DEC)+ "dB"; //configura a String de Intensidade de Sinal (RSSI)
-  //mostrar dados em tela
-  loraData();
+SSD1306 display(DISPLAY_ADDRESS, DISPLAY_SDA, DISPLAY_SCL);
+SPIClass sd_spi(HSPI);
+
+RHSoftwareSPI sx1278_spi;
+RH_RF95 rf95(LORA_SS, LORA_DI00, sx1278_spi);
+uint8_t lora_len = RH_RF95_MAX_MESSAGE_LEN;
+
+uint8_t lora_buf[RH_RF95_MAX_MESSAGE_LEN];
+uint8_t lora_tk[RH_RF95_MAX_MESSAGE_LEN];
+
+//=============================================================================================== FUNCTIONS
+
+inline void displayInit()
+{
+  pinMode(DISPLAY_RST, OUTPUT);
+  digitalWrite(DISPLAY_RST, LOW);
+  delay(1);
+  digitalWrite(DISPLAY_RST, HIGH);
+  delay(1);
+  if(!display.init())
+    DEBUG_PRINTLN("Display: WARNING! Init failed!");
+  else
+    DEBUG_PRINTLN("Display: Init OK!"); 
+  displayConfig();
 }
 
-// Função que inicializa o display
-bool displayBegin()
-{
-  // Reiniciamos o display
-  pinMode(DISPLAY_RST_PIN, OUTPUT);
-  digitalWrite(DISPLAY_RST_PIN, LOW);
-  delay(1);
-  digitalWrite(DISPLAY_RST_PIN, HIGH);
-  delay(1);
+//------------------------------------------------------------------------------------------------
 
-  return display.init(); 
-}
-
-// Função que faz algumas configuções no display
-void displayConfig()
+inline void displayConfig()
 {
-  // Invertemos o display verticalmente
   display.flipScreenVertically();
-  // Setamos a fonte
   display.setFont(ArialMT_Plain_16);
-  // Alinhamos a fonta à esquerda
   display.setTextAlignment(TEXT_ALIGN_LEFT);
+  display.drawXbm(0, 0, logo_width, logo_height, (uint8_t*) logo_bits);
+  display.display();
+  delay(2000);
 }
 
+//------------------------------------------------------------------------------------------------
 
-void loraInit()
+inline void loraInit()
 {
   pinMode(LORA_RST, OUTPUT);
   digitalWrite(LORA_RST, LOW);
@@ -80,98 +106,93 @@ void loraInit()
   sx1278_spi.setPins(LORA_MISO, LORA_MOSI, LORA_SCK);
 
   if (!rf95.init()) 
-    Serial.println("LoRa Radio: init failed.");
+    DEBUG_PRINTLN("LoRa Radio: WARNING! Init failed.");
   else
-    Serial.println("LoRa Radio: init OK!");
+    DEBUG_PRINTLN("LoRa Radio: Init OK!");
 
-  RH_RF95::ModemConfig myconfig =  {RH_RF95_BW_62_5KHZ, RH_RF95_CODING_RATE_4_5, RH_RF95_SPREADING_FACTOR_128CPS};
+  RH_RF95::ModemConfig myconfig =  {0x72, 0x74, 0x04}; //125 KHz, 4/5 CR, SF7, CRC On, Low Data Rate Op. Off, AGC On
   rf95.setModemRegisters(&myconfig);
 
   float Freq = LORA_FREQ;
 
   if (!rf95.setFrequency(LORA_FREQ))
-    Serial.println("LoRa Radio: setFrequency failed.");
+    DEBUG_PRINTLN("LoRa Radio: WARNING! setFrequency failed.");
   else
-    Serial.printf("LoRa Radio: freqency set to %.1f MHz\n", Freq);
+    DEBUG_PRINTF("LoRa Radio: Freqency set to %.1f MHz\n", Freq);
 
-  Serial.printf("LoRa Radio: Max Msg size: %u Bytes\n", RH_RF95_MAX_MESSAGE_LEN);
+  DEBUG_PRINTF("LoRa Radio: Max Msg size: %u Bytes\n", RH_RF95_MAX_MESSAGE_LEN);
 
   rf95.setModeRx();
-  rf95.setTxPower(20, false);
-  rf95.setSpreadingFactor(LORA_SF);
-  rf95.setSignalBandwidth(LORA_BANDWIDTH);
-  rf95.setCodingRate4(LORA_CODING_RATE);
-  rf95.setPayloadCRC(true);
+  
+  //rf95.setSpreadingFactor(LORA_SF);
+  //rf95.setSignalBandwidth(LORA_BANDWIDTH);
+  //rf95.setCodingRate4(LORA_CODING_RATE);
+  //rf95.setPayloadCRC(true);
 
   //rf95.printRegisters();
   
 }
 
+//==================================================================================================== MAIN
+
 void setup() 
 {
-  // Iniciamos a serial com velocidade de 9600
-  Serial.begin(57600);
-  LoRa.setSpreadingFactor(7);
-  LoRa.setSignalBandwidth(62.5E3);
-  LoRa.enableCrc();
-
-  // Exibimos "Starting..." na serial (debug)
-  Serial.println("Starting...");
-
-  // Iniciamos o display
-  if(!displayBegin())
-  {
-    // Se não deu certo, exibimos falha de display na serial
-    Serial.println("Display failed!");
-    // E deixamos em loop infinito
-    while(1);
-  }
-
-  // Configuramos o posicionamento da tela, fonte e o alinhamento do texto
-  displayConfig();
+  Serial.begin(SERIAL_BR);
   
-  // Iniciamos o lora
-  if(!loraBegin()) 
-  {
-    // Se não deu certo, exibimos falha de lora na serial
-    Serial.println("LoRa failed!");
-    // E deixamos em loop infinito
-    while (1);
-  }
+  DEBUG_PRINTLN("Starting Receiver...");
 
-  //LoRa.onReceive(cbk);
-  LoRa.receive(); //habilita o Lora para receber dados
-
-  display.clear();
-  display.drawString(0, 0, "LoRa Initial success!");
-  display.drawString(0, 10, "Wait for incomm data...");
-  display.display();
-  delay(1000);
-
-  
+  displayInit();
+  loraInit();
 }
+
+//------------------------------------------------------------------------------
 
 void loop() 
 {  
-  //parsePacket: checa se um pacote foi recebido
-  //retorno: tamanho do pacote em bytes. Se retornar 0 (ZERO) nenhum pacote foi recebido
-  int packetSize = LoRa.parsePacket();
-  //caso tenha recebido pacote chama a função para configurar os dados que serão mostrados em tela
-  if (packetSize) { 
-    cbk(packetSize);  
-  }
-  delay(10);
-}
 
-void loraData(){
-  display.clear();
-  display.setTextAlignment(TEXT_ALIGN_LEFT);
-  display.setFont(ArialMT_Plain_16);
-  display.drawString(0 , 18 , "Rx "+ packSize + " bytes");
-  Serial.println("Rx "+ packSize + " bytes");
-  display.drawStringMaxWidth(0 , 39 , 128, packet);
-  Serial.println(packet);
-  display.drawString(0, 0, rssi);
-  Serial.println(rssi);  
+  int line = 0;
+
   display.display();
+
+  lora_len = RH_RF95_MAX_MESSAGE_LEN;
+    
+  if(rf95.recv(lora_buf, &lora_len))
+  {
+    //RH_RF95::printBuffer("request: ", lora_buf, lora_len);
+
+    memcpy(lora_tk, lora_buf, lora_len);
+
+    strtok((char*)lora_tk, " ");
+    String id = strtok(NULL, " ");
+    String TxTime = strtok(NULL, " ");
+
+    DEBUG_PRINT("Got message (ID ");
+    DEBUG_PRINT(id + "): "); 
+    DEBUG_PRINTLN((char*)lora_buf);
+
+    display.clear();
+    display.drawString(0, line * FONT_HEIGHT, "ID: " + String (id));
+
+    line++;
+
+    DEBUG_PRINT("RSSI: ");
+    DEBUG_PRINTLN2(rf95.lastRssi(), DEC);
+
+    display.drawString(0, line * FONT_HEIGHT, "RSSI: " + String(rf95.lastRssi()));
+
+    DEBUG_PRINT("SNR: ");
+    DEBUG_PRINTLN2(rf95.lastSNR(), DEC);
+
+    line++;
+
+    display.drawString(0, line * FONT_HEIGHT, "SNR: " + String(rf95.lastSNR()));
+
+    line++;
+
+    display.drawString(0, line * FONT_HEIGHT, "Time: " + String(TxTime));
+
+
+    Serial.flush();
+  }
+
 }
