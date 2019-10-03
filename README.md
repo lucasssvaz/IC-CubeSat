@@ -38,6 +38,11 @@ The main objective of this assignment is to create a low-cost satellite using CO
 
 ### Hardware
 
+- [Heltec WiFi LoRa 32 (V2)](https://heltec.org/project/wifi-lora-32/) (915MHz version)
+- DS3231 Real-Time Clock Module
+- MicroSD Card Module
+- DS18B20 Digital Temperature Sensor
+
 ### Dependencies
 - [RadioHead](http://www.airspayce.com/mikem/arduino/RadioHead/) ([Source](https://github.com/PaulStoffregen/RadioHead))
 - OneWire ([Source](https://github.com/PaulStoffregen/OneWire)) [Arduino IDE]
