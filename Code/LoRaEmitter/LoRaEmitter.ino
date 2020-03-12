@@ -145,8 +145,9 @@ inline void loraInit()
   rf95.setModeTx();
   rf95.setTxPower(LORA_TXPWR, false);
 
-  //rf95.printRegisters();
-  
+  #ifdef DEBUG
+  	rf95.printRegisters();
+  #endif
 }
 
 //---------------------------------------------------------------------------------------------------------
