@@ -3,7 +3,7 @@
 [![Latest](https://img.shields.io/github/v/release/lucasssvaz/IC-CubeSat?include_prereleases&label=Release)](https://github.com/lucasssvaz/IC-CubeSat/releases/latest)
 [![Downloads](https://img.shields.io/github/downloads/lucasssvaz/IC-CubeSat/total?label=Downloads)](https://github.com/lucasssvaz/IC-CubeSat/releases/latest)
 [![GitHub license](https://img.shields.io/github/license/lucasssvaz/IC-CubeSat?color=yellow&label=License)](https://github.com/lucasssvaz/IC-CubeSat/blob/master/LICENSE)
-[![saythanks](https://img.shields.io/badge/Say-Thanks-ff69b4.svg)](https://saythanks.io/to/lucasssvaz)
+[![saythanks](https://img.shields.io/badge/Say-Thanks-ff69b4.svg)](https://saythanks.io/to/lucassvaz%40yahoo.com.br)
 [![translate](https://img.shields.io/badge/Help%20Us-Translate-blue.svg)](https://gitlocalize.com/repo/3252)
 
 ### Table of Contents
